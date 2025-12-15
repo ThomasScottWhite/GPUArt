@@ -54,10 +54,8 @@ CXXFLAGS := -std=c++17 -O3 -Wall -fopenmp -march=native -ffast-math
 CXXFLAGS += -I./include -I$(ORT_INCLUDE_DIR) -I$(CUDA_INC_DIR)
 CXXFLAGS += $(shell pkg-config --cflags opencv4)
 
-# CUDA Flags (for NVCC)
+# CUDA Flags 
 NVCCFLAGS := -std=c++17 -O3 -use_fast_math -arch=sm_86 -I./include -I$(ORT_INCLUDE_DIR)
-# NVCC needs to know where to find OpenCV headers if included in .cu files (not used here but good practice)
-# NVCCFLAGS += --compiler-options "$(shell pkg-config --cflags opencv4)"
 
 # Linker Flags
 LDFLAGS := -L$(ORT_LIB_DIR) -L$(CUDA_LIB_DIR) -fopenmp

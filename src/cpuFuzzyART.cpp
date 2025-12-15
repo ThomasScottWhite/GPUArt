@@ -2,10 +2,9 @@
 #include <numeric>
 #include <iostream>
 #include <limits>
-#include <algorithm> // for std::sort
-#include <random>    // Added for random generation
+#include <algorithm>
+#include <random>
 
-// Updated Constructor signature to accept init_categories
 CPUFuzzyART::CPUFuzzyART(int input_dim, int max_categories, float vigilance, float choice_alpha, float learning_rate, int init_categories)
     : input_dim_(input_dim), max_categories_(max_categories),
       vigilance_(vigilance), choice_alpha_(choice_alpha), learning_rate_(learning_rate)
@@ -17,7 +16,6 @@ CPUFuzzyART::CPUFuzzyART(int input_dim, int max_categories, float vigilance, flo
     {
         int limit = std::min(init_categories, max_categories);
 
-        // Random number generation setup
         std::mt19937 gen(42);
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
@@ -66,7 +64,7 @@ int CPUFuzzyART::run(const std::vector<float> &input)
 
     // Choice Function Calculation
     std::vector<std::pair<float, int>> candidates;
-    // Important: reserve based on CURRENT initialized categories, not just 0
+
     candidates.reserve(num_initialized_categories_);
 
     for (int j = 0; j < num_initialized_categories_; j++)
