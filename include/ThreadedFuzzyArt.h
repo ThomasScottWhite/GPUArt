@@ -9,7 +9,7 @@
 class ThreadedFuzzyART
 {
 public:
-    ThreadedFuzzyART(int input_dim, int max_categories = 1000, float vigilance = 0.9f, float choice_alpha = 1e-3f, float learning_rate = 1.0f, int init_categories = 0);
+    ThreadedFuzzyART(int input_dim, int max_categories = 1000, float vigilance = 0.9f, float choice_alpha = 1e-3f, float learning_rate = 1.0f, int init_categories = 0, int num_threads = 4);
     ~ThreadedFuzzyART() = default;
 
     int run(const std::vector<float> &input);
@@ -21,6 +21,7 @@ private:
     int input_dim_;
     int art_dim_;
     int max_categories_;
+    int num_threads_;
 
     float vigilance_;
     float choice_alpha_;

@@ -9,22 +9,24 @@ CPUFuzzyART::CPUFuzzyART(int input_dim, int max_categories, float vigilance, flo
     : input_dim_(input_dim), max_categories_(max_categories),
       vigilance_(vigilance), choice_alpha_(choice_alpha), learning_rate_(learning_rate)
 {
+    // The dimension is doubled for complement coding
     art_dim_ = input_dim * 2;
     weights_.reserve(max_categories);
 
+    // This randomly generates initial categories so we can have consistant performance benchmarks
     if (init_categories > 0)
     {
         int limit = std::min(init_categories, max_categories);
 
         std::mt19937 gen(42);
-        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+        std::uniform_real_distribution<float> distrobution(0.0f, 1.0f);
 
         for (int i = 0; i < limit; i++)
         {
             std::vector<float> random_weight(art_dim_);
             for (int k = 0; k < input_dim_; k++)
             {
-                float val = dis(gen);
+                float val = distrobution(gen);
 
                 random_weight[k] = val;
                 random_weight[k + input_dim_] = 1.0f - val;
@@ -42,13 +44,7 @@ CPUFuzzyART::CPUFuzzyART(int input_dim, int max_categories, float vigilance, flo
 
 int CPUFuzzyART::run(const std::vector<float> &input)
 {
-    // Complement Code Input
-    if ((int)input.size() != input_dim_)
-    {
-        std::cerr << "[Error] CPUFuzzyART input dimension mismatch." << std::endl;
-        return -1;
-    }
-
+    // Complement Code Input and Normalization
     std::vector<float> I(art_dim_);
     for (int i = 0; i < input_dim_; i++)
     {
@@ -87,11 +83,9 @@ int CPUFuzzyART::run(const std::vector<float> &input)
               { return a.first > b.first; });
 
     // Resonance Check
-    float norm_I = (float)input_dim_;
-
-    for (const auto &cand : candidates)
+    for (const auto &candidate : candidates)
     {
-        int idx = cand.second;
+        int idx = candidate.second;
 
         float norm_intersection = 0.0f;
         for (int k = 0; k < art_dim_; k++)
@@ -99,7 +93,7 @@ int CPUFuzzyART::run(const std::vector<float> &input)
             norm_intersection += std::min(I[k], weights_[idx][k]);
         }
 
-        float match_score = norm_intersection / norm_I;
+        float match_score = norm_intersection / (float)art_dim_;
 
         // Vigilance Check
         if (match_score >= vigilance_)

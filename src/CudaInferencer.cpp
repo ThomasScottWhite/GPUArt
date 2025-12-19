@@ -4,6 +4,7 @@
 #include <iostream>
 #include <onnxruntime_c_api.h>
 
+// Modified from ONNX Runtime CUDA example
 CudaInferencer::CudaInferencer(const std::string &model_path)
     : env_(ORT_LOGGING_LEVEL_WARNING, "CudaInferencer"),
       memory_info_cuda_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault))
@@ -13,13 +14,9 @@ CudaInferencer::CudaInferencer(const std::string &model_path)
     session_options.SetIntraOpNumThreads(1);
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-    // ENABLE CUDA
     (void)OrtSessionOptionsAppendExecutionProvider_CUDA(session_options, 0);
-
     session_ = Ort::Session(env_, model_path.c_str(), session_options);
-
     memory_info_cuda_ = Ort::MemoryInfo("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemType::OrtMemTypeDefault);
-
     Ort::AllocatorWithDefaultOptions allocator;
 
     // Input
@@ -43,7 +40,7 @@ CudaInferencer::CudaInferencer(const std::string &model_path)
     if (output_shape_2_[0] == -1)
         output_shape_2_[0] = 1;
 
-    // Persistent Output Memory on GPU
+    // Keep a pointer to the output buffers on GPU for ART
     auto calc_size = [](std::vector<int64_t> &shape) -> int64_t
     {
         for (size_t i = 0; i < shape.size(); i++)
@@ -59,16 +56,11 @@ CudaInferencer::CudaInferencer(const std::string &model_path)
     int64_t out0_elements = calc_size(output_shape_0_);
     int64_t out2_elements = calc_size(output_shape_2_);
 
-    if (out0_elements <= 0 || out2_elements <= 0)
-    {
-        throw std::runtime_error("Invalid output tensor size (calculated <= 0). Model has dynamic shapes not handled.");
-    }
-
     output_0_size_bytes_ = out0_elements * sizeof(float);
     output_2_size_bytes_ = out2_elements * sizeof(float);
 
-    CHECK_CUDA(cudaMalloc((void **)&d_output_0_, output_0_size_bytes_));
-    CHECK_CUDA(cudaMalloc((void **)&d_output_2_, output_2_size_bytes_));
+    cudaMalloc((void **)&d_output_0_, output_0_size_bytes_);
+    cudaMalloc((void **)&d_output_2_, output_2_size_bytes_);
 }
 
 CudaInferencer::~CudaInferencer()

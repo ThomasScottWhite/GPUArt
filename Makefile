@@ -77,7 +77,7 @@ CU_OBJS := $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(CU_SRCS))
 OBJS := $(CPP_OBJS) $(CU_OBJS)
 
 # Binary name
-TARGET := onnx_gpu
+TARGET := art_gpu
 
 # Build Rules
 all: info $(TARGET)

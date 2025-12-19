@@ -8,7 +8,7 @@ void launch_gap_kernel(float *d_in, float *d_out, int C, int H, int W);
 class FuzzyART
 {
 public:
-    FuzzyART(int input_dim, int max_categories = 1000, float vigilance = 0.9f, float choice_alpha = 1e-3f, float learning_rate = 1.0f, int init_categories = 0);
+    FuzzyART(int input_dim, int max_categories = 1000, float vigilance = 0.9f, float choice_alpha = 1e-3f, float learning_rate = 1.0f, int init_categories = 0, int max_blocks = 128, int threads_per_block = 256);
     ~FuzzyART();
 
     int run(float *d_input);
@@ -19,6 +19,9 @@ private:
     int input_dim_;
     int art_dim_;
     int max_categories_;
+
+    int max_blocks_ = 128;
+    int threads_per_block_ = 256;
 
     float vigilance_;
     float choice_alpha_;

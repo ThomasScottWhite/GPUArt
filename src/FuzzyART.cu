@@ -8,6 +8,11 @@
 #include <vector>
 #include <random>
 
+// These are just some preprocessing kernels for FuzzyART,
+// The global average pooling kernel condenses the intermediate layers
+// Complement coding kernel prepares the input for FuzzyART processing
+
+// These are not very effecient implementations but we are not measuring performance here
 __global__ void global_average_pooling_kernel(float *d_in, float *d_out, int Num_Channels, int H, int W)
 {
     int channel = blockIdx.x;
@@ -31,87 +36,93 @@ __global__ void global_average_pooling_kernel(float *d_in, float *d_out, int Num
 void launch_gap_kernel(float *d_in, float *d_out, int Num_Channels, int H, int W)
 {
     global_average_pooling_kernel<<<Num_Channels, 256>>>(d_in, d_out, Num_Channels, H, W);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-    {
-        printf("CUDA GAP Kernel Error: %s\n", cudaGetErrorString(err));
-    }
 }
 
 __global__ void complement_coding_kernel(float *d_in, float *d_out, int original_dim)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < original_dim)
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = idx; i < original_dim; i += stride)
     {
-        float val = d_in[idx];
+        float val = d_in[i];
         if (val < 0.0f)
             val = 0.0f;
         if (val > 1.0f)
             val = 1.0f;
 
-        d_out[idx] = val;
-        d_out[idx + original_dim] = 1.0f - val;
+        d_out[i] = val;
+        d_out[i + original_dim] = 1.0f - val;
     }
 }
 
+// Each thread computes the choice function for one category
 __global__ void calculate_categorical_choice(float *d_input, float *d_weights, float *device_cat_activations, int dim, int num_cats, float alpha, float vigilance, float norm_input)
 {
-    int cat_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (cat_idx >= num_cats)
-        return;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
-    float norm_w = 0.0f;
-    float norm_intersection = 0.0f;
-
-    int offset = cat_idx * dim;
-
-    for (int i = 0; i < dim; i++)
+    for (int current_cat = idx; current_cat < num_cats; current_cat += stride)
     {
-        float w = d_weights[offset + i];
-        float in = d_input[i];
+        float norm_w = 0.0f;
+        float norm_intersection = 0.0f;
 
-        norm_w += w;
-        norm_intersection += fminf(in, w);
-    }
+        int offset = current_cat * dim;
 
-    float match_score = norm_intersection / norm_input;
+        for (int i = 0; i < dim; i++)
+        {
+            float w = d_weights[offset + i];
+            float in = d_input[i];
 
-    if (match_score >= vigilance)
-    {
-        device_cat_activations[cat_idx] = norm_intersection / (alpha + norm_w);
-    }
-    else
-    {
-        device_cat_activations[cat_idx] = -1.0f;
+            norm_w += w;
+            norm_intersection += fminf(in, w);
+        }
+
+        float match_score = norm_intersection / norm_input;
+
+        if (match_score >= vigilance)
+        {
+            device_cat_activations[current_cat] = norm_intersection / (alpha + norm_w);
+        }
+        else
+        {
+            device_cat_activations[current_cat] = -1.0f;
+        }
     }
 }
 
+// Update weights of the winning category
 __global__ void update_weights_kernel(float *d_input, float *d_weights, int dim, int winner_idx, float beta)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < dim)
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = idx; i < dim; i += stride)
     {
-        int w_idx = winner_idx * dim + idx;
+        int w_idx = winner_idx * dim + i;
         float w_old = d_weights[w_idx];
-        float in = d_input[idx];
+        float in = d_input[i];
 
         float intersection = fminf(in, w_old);
         d_weights[w_idx] = beta * intersection + (1.0f - beta) * w_old;
     }
 }
 
+// Initialize weights for a new category
 __global__ void init_new_category_kernel(float *d_input, float *d_weights, int dim, int new_idx)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < dim)
+    int stride = blockDim.x * gridDim.x;
+    for (int i = idx; i < dim; i += stride)
     {
-        d_weights[new_idx * dim + idx] = d_input[idx];
+        d_weights[new_idx * dim + i] = d_input[i];
     }
 }
 
-FuzzyART::FuzzyART(int input_dim, int max_categories, float vigilance, float choice_alpha, float learning_rate, int init_categories)
+FuzzyART::FuzzyART(int input_dim, int max_categories, float vigilance, float choice_alpha, float learning_rate, int init_categories, int max_blocks, int threads_per_block)
     : input_dim_(input_dim), max_categories_(max_categories),
-      vigilance_(vigilance), choice_alpha_(choice_alpha), learning_rate_(learning_rate)
+      vigilance_(vigilance), choice_alpha_(choice_alpha), learning_rate_(learning_rate),
+      max_blocks_(max_blocks), threads_per_block_(threads_per_block)
 {
     art_dim_ = input_dim * 2;
     init_device_memory();
@@ -119,12 +130,12 @@ FuzzyART::FuzzyART(int input_dim, int max_categories, float vigilance, float cho
     if (init_categories > 0)
     {
         int limit = std::min(init_categories, max_categories);
-
         std::vector<float> host_weights(limit * art_dim_);
 
         std::mt19937 gen(42);
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
+        // Initialize random weights
         for (int i = 0; i < limit; i++)
         {
             int offset = i * art_dim_;
@@ -139,13 +150,6 @@ FuzzyART::FuzzyART(int input_dim, int max_categories, float vigilance, float cho
         }
 
         size_t bytes_to_copy = host_weights.size() * sizeof(float);
-        cudaError_t err = cudaMemcpy(d_weights_, host_weights.data(), bytes_to_copy, cudaMemcpyHostToDevice);
-
-        if (err != cudaSuccess)
-        {
-            printf("CUDA Init Weights Error: %s\n", cudaGetErrorString(err));
-        }
-
         num_initialized_categories_ = limit;
     }
     else
@@ -176,22 +180,23 @@ void FuzzyART::init_device_memory()
 int FuzzyART::run(float *d_input)
 {
     // Complement Coding
-    int threads = 256;
-    int blocks = (input_dim_ + threads - 1) / threads;
-    complement_coding_kernel<<<blocks, threads>>>(d_input, d_input_compl_, input_dim_);
+    int needed_blocks = (input_dim_ + threads_per_block_ - 1) / threads_per_block_;
+
+    int grid_size = std::min(needed_blocks, max_blocks_);
+
+    complement_coding_kernel<<<grid_size, threads_per_block_>>>(d_input, d_input_compl_, input_dim_);
 
     if (num_initialized_categories_ > 0)
     {
         // Choice Function
-        float norm_input = (float)input_dim_;
-        int cat_threads = 256;
-        int cat_blocks = (num_initialized_categories_ + cat_threads - 1) / cat_threads;
+        int category_block_count = (num_initialized_categories_ + threads_per_block_ - 1) / threads_per_block_;
+        int category_blocks = std::min(category_block_count, max_blocks_);
 
-        calculate_categorical_choice<<<cat_blocks, cat_threads>>>(
+        calculate_categorical_choice<<<category_blocks, threads_per_block_>>>(
             d_input_compl_, d_weights_, device_cat_activations, art_dim_, num_initialized_categories_,
-            choice_alpha_, vigilance_, norm_input);
+            choice_alpha_, vigilance_, (float)input_dim_);
 
-        // Find Winner
+        // Find Winner, we do this on CPU for simplicity
         std::vector<float> cat_activations(num_initialized_categories_);
         cudaMemcpy(cat_activations.data(), device_cat_activations, num_initialized_categories_ * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -199,12 +204,13 @@ int FuzzyART::run(float *d_input)
         float max_val = *max_iter;
         int winner_idx = std::distance(cat_activations.begin(), max_iter);
 
-        // Update Weights (if resonance)
+        // Update Weights
         if (max_val > -0.5f)
         {
-            int w_threads = 256;
-            int w_blocks = (art_dim_ + w_threads - 1) / w_threads;
-            update_weights_kernel<<<w_blocks, w_threads>>>(d_input_compl_, d_weights_, art_dim_, winner_idx, learning_rate_);
+            int weight_block_count = (art_dim_ + threads_per_block_ - 1) / threads_per_block_;
+            int weight_blocks = std::min(weight_block_count, max_blocks_);
+
+            update_weights_kernel<<<weight_blocks, threads_per_block_>>>(d_input_compl_, d_weights_, art_dim_, winner_idx, learning_rate_);
             return winner_idx;
         }
     }
@@ -214,9 +220,9 @@ int FuzzyART::run(float *d_input)
     {
         int new_idx = num_initialized_categories_;
 
-        int w_threads = 256;
-        int w_blocks = (art_dim_ + w_threads - 1) / w_threads;
-        init_new_category_kernel<<<w_blocks, w_threads>>>(d_input_compl_, d_weights_, art_dim_, new_idx);
+        int weight_block_count = (art_dim_ + threads_per_block_ - 1) / threads_per_block_;
+        int weight_blocks = std::min(weight_block_count, max_blocks_);
+        init_new_category_kernel<<<weight_blocks, threads_per_block_>>>(d_input_compl_, d_weights_, art_dim_, new_idx);
 
         num_initialized_categories_++;
         return new_idx;

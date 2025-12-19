@@ -6,16 +6,6 @@
 #include <string>
 #include <iostream>
 
-#define CHECK_CUDA(call)                                                                                    \
-    {                                                                                                       \
-        cudaError_t err = call;                                                                             \
-        if (err != cudaSuccess)                                                                             \
-        {                                                                                                   \
-            std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at line " << __LINE__ << std::endl; \
-            exit(1);                                                                                        \
-        }                                                                                                   \
-    }
-
 class CudaInferencer
 {
 public:
